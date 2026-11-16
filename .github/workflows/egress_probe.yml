@@ -1,0 +1,78 @@
+name: egress-probe
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "full | egress_only"
+        required: false
+        default: "full"
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: probe
+        run: |
+          set +e
+          MODE="${{ github.event.inputs.mode }}"
+          echo "MODE=$MODE"
+          echo "=== EGRESS ==="
+          echo -n "ifconfig.me: "; curl -s -m 10 https://ifconfig.me; echo
+          sleep 1
+          echo -n "api.ipify.org: "; curl -s -m 10 https://api.ipify.org; echo
+          echo -n "hostname: "; hostname -f
+          sleep 1
+          echo "=== ERPC ==="
+          echo "--- erpc eth_chainId ---"
+          curl -s -m 10 -D - -H 'Content-Type: application/json' -H 'x-erpc-commit: 803b67d8' \
+            -X POST --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+            https://erpc.kiln.fi/main/evm/1 | head -c 800
+          echo
+          sleep 1
+          if [ "$MODE" = "full" ]; then
+            echo "--- erpc eth_blockNumber ---"
+            curl -s -m 10 -D - -H 'Content-Type: application/json' -H 'x-erpc-commit: 803b67d8' \
+              -X POST --data '{"jsonrpc":"2.0","id":2,"method":"eth_blockNumber","params":[]}' \
+              https://erpc.kiln.fi/main/evm/1 | head -c 800
+            echo
+            sleep 1
+            echo "=== SIGNATAIRE TCP (24) ==="
+            for ip in 3.255.13.221 54.216.229.51 52.215.179.5 108.129.5.197 52.48.66.163 52.212.240.227; do
+              for port in 9000 9001 8545 443; do
+                t0=$(date +%s%N)
+                if timeout 3 bash -c "echo > /dev/tcp/$ip/$port" 2>/dev/null; then tc=open; else tc=closed; fi
+                t1=$(date +%s%N)
+                echo "TCP $ip:$port $tc $(( (t1-t0)/1000000 ))ms"
+                sleep 0.3
+              done
+            done
+            echo "=== SIGNATAIRE GET /upcheck on :9000 (6) ==="
+            i=0
+            for ip in 3.255.13.221 54.216.229.51 52.215.179.5 108.129.5.197 52.48.66.163 52.212.240.227; do
+              code=$(curl -s -m 6 -o up.$i.txt -w '%{http_code}' "http://$ip:9000/upcheck")
+              echo "GET $ip:9000/upcheck http=$code body=$(head -c 200 up.$i.txt | tr -d '\r\n')"
+              sleep 0.5
+              i=$((i+1))
+            done
+            echo "=== SIGNATAIRE JSON-RPC (max 2 endpoints x 2 methods) ==="
+            i=0
+            n=0
+            for ip in 3.255.13.221 54.216.229.51 52.215.179.5 108.129.5.197 52.48.66.163 52.212.240.227; do
+              if [ -s up.$i.txt ] && [ "$n" -lt 2 ]; then
+                n=$((n+1))
+                echo "--- $ip web3_clientVersion ---"
+                curl -s -m 6 -H 'Content-Type: application/json' -X POST \
+                  --data '{"jsonrpc":"2.0","id":1,"method":"web3_clientVersion","params":[]}' \
+                  "http://$ip:9000/" | head -c 400; echo
+                sleep 0.5
+                echo "--- $ip eth_accounts ---"
+                curl -s -m 6 -H 'Content-Type: application/json' -X POST \
+                  --data '{"jsonrpc":"2.0","id":2,"method":"eth_accounts","params":[]}' \
+                  "http://$ip:9000/" | head -c 800; echo
+                sleep 0.5
+              fi
+              i=$((i+1))
+            done
+          fi
+          echo "=== DONE ==="
+          exit 0
