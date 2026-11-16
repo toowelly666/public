@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "full | egress_only"
+        description: "full | egress_only | sig_only"
         required: false
         default: "full"
 jobs:
@@ -22,6 +22,18 @@ jobs:
           echo -n "api.ipify.org: "; curl -s -m 10 https://api.ipify.org; echo
           echo -n "hostname: "; hostname -f
           sleep 1
+          if [ "$MODE" = "sig_only" ]; then
+            echo "=== SIGNATAIRE TCP 9000 (6) ==="
+            for ip in 3.255.13.221 54.216.229.51 52.215.179.5 108.129.5.197 52.48.66.163 52.212.240.227; do
+              t0=$(date +%s%N)
+              if timeout 3 bash -c "echo > /dev/tcp/$ip/9000" 2>/dev/null; then tc=open; else tc=closed; fi
+              t1=$(date +%s%N)
+              echo "TCP $ip:9000 $tc $(( (t1-t0)/1000000 ))ms"
+              sleep 0.3
+            done
+            echo "=== DONE ==="
+            exit 0
+          fi
           echo "=== ERPC ==="
           echo "--- erpc eth_chainId ---"
           curl -s -m 10 -D - -H 'Content-Type: application/json' -H 'x-erpc-commit: 803b67d8' \
@@ -50,7 +62,7 @@ jobs:
             i=0
             for ip in 3.255.13.221 54.216.229.51 52.215.179.5 108.129.5.197 52.48.66.163 52.212.240.227; do
               code=$(curl -s -m 6 -o up.$i.txt -w '%{http_code}' "http://$ip:9000/upcheck")
-              echo "GET $ip:9000/upcheck http=$code body=$(head -c 200 up.$i.txt | tr -d '\r\n')"
+              echo "GET $ip:9000/upcheck http=$code body=$(head -c 200 up.$i.txt 2>/dev/null | tr -d '\r\n')"
               sleep 0.5
               i=$((i+1))
             done
